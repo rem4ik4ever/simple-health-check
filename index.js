@@ -8,47 +8,41 @@ const SERVER_ENDPOINT = process.env.SERVER_ENDPOINT || 'http://default-service.c
 const PORT = process.env.PORT || 3000;
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || 'https://hooks.slack.com/services/your/default/webhook/url';
 
-// Alert function to send POST request to Slack webhook
-async function alertFunction(error) {
-  console.error(`ALERT! The server is not responding. Error: ${error}`);
+let currentState = "UP"; // Initial state, you can start it as "UNKNOWN" or "DOWN" as per your need
 
+// Alert function to send POST request to Slack webhook
+// Alert function to send POST request to Slack webhook
+async function alertFunction(message, status) {
+  let color = status === "UP" ? "#36a64f" : "#ff0000"; // Green for UP, Red for DOWN
+  if (status === "STABLE") return;
   try {
     await axios.post(SLACK_WEBHOOK_URL, {
-      blocks: [
+      attachments: [
         {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: "*Health Check Alert!* :rotating_light:"
-          }
-        },
-        {
-          type: "section",
+          color: color,
+          pretext: "Server Health Check Alert",
+          title: `Server is currently ${status}`,
+          text: message,
           fields: [
             {
-              type: "mrkdwn",
-              text: `*Error:*\n${error}`
-            },
-            {
-              type: "mrkdwn",
-              text: `*Timestamp:*\n${new Date().toUTCString()}`
+              title: "Timestamp",
+              value: getCurrentDateTimeET(),
+              short: false
             }
-          ]
-        },
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: "Please investigate the issue. :mag:"
-          }
+          ],
+          footer: "Health Monitor Bot",
+          footer_icon: "https://platform.slack-edge.com/img/default_application_icon.png"
         }
       ]
     });
-
     console.log('Alert sent to Slack successfully.');
   } catch (err) {
     console.error('Could not send alert to Slack:', err);
   }
+}
+function getCurrentDateTimeET() {
+  const date = new Date();
+  return date.toLocaleString("en-US", { timeZone: "America/New_York" });
 }
 
 // Function to ping another service's health check endpoint
@@ -57,19 +51,33 @@ async function healthCheck() {
     const response = await axios.get(SERVER_ENDPOINT);
 
     // Check if the status code is 200 (OK)
-    if (response.status !== 200) {
-      alertFunction(`Received status code: ${response.status}`);
+    if (response.status === 200) {
+      if (currentState === 'STABLE') {
+        console.log("Server is stable")
+        return;
+      }
+      if (currentState === "DOWN") {
+        currentState = "UP";
+        alertFunction(`The server is back up.`, currentState);
+      } else {
+        currentState = "STABLE";
+        console.log("Server is stable")
+      }
+      console.log('Server is healthy', response.data);
+    } else {
+      currentState = "DOWN";
+      alertFunction(`Received an unexpected status code: ${response.status}`, currentState);
     }
 
-    console.log('Server is healthy', response.data);
   } catch (error) {
-    alertFunction(error);
+    currentState = "DOWN";
+    alertFunction(`:x: ALERT! The server is not responding. Error: ${error} as of ${getCurrentDateTimeET()}`);
   }
 }
 
 // Schedule a cron job to run every 10 minutes
 cron.schedule('*/1 * * * *', () => {
-  console.log('Running a health check every 10 minutes');
+  console.log('Running a health check every 1 minute');
   healthCheck();
 });
 
@@ -84,4 +92,3 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}/`);
 });
-
